@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ethereum-merge"
+version = "0.1.0"
+description = "Splits the Merge notebook into section scripts and relocates the crypto inputs into local parquet assets for reproducible execution."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy>=2.2",
+    "pandas>=2.2",
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.7",
+    "ipython>=9.0",
+    "nbformat>=5.10",
+    "sympy>=1.13",
+    "tqdm>=4.67",
+    "memory-profiler>=0.61",
+    "plotly>=6.0",
+    "pyarrow>=20.0",
+    "quantecon>=0.8",
+    "risklabai @ git+https://github.com/RiskLabAI/RiskLabAI.py",
+    "tzdata>=2026.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ethereum-merge = "ethereum_merge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true

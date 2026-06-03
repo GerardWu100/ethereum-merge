@@ -1,0 +1,7 @@
+# Project configuration for the notebook-derived pipeline.
+# CLI flags (for example --smoke) override these defaults at runtime.
+
+[pipeline.smoke]
+# Smaller date window for quick verification runs.
+start = "2022-09-01"
+end = "2022-10-15 23:59:59"
