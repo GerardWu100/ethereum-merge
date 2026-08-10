@@ -30,3 +30,4 @@ The execution model intentionally mirrors notebook semantics. Each step script i
 - 2026-04-16: Added a Markdown notebook copy-out so the project keeps a readable version of the original notebook text locally.
 - 2026-04-16: Replaced the earlier pickle-based processed data layer with an explicit raw-to-parquet conversion step.
 - 2026-05-20: Aligned layout with the standard project structure: CLI in package, thin `scripts/` wrapper, `config.toml`, and `tests/`.
+- 2026-08-10: Added `CODE_EXPLAINED.html`, a single-page walkthrough of the pipeline structure, formulas, and sample values. Fixed the defects it uncovered: missing `numpy` and `statsmodels.formula.api` imports that stopped any run, a roll adjustment that compared contract prices one bar apart, an unseeded shuffle in the feature-importance loop, an `eth_threshold` name collision between steps 03 and 06, and a stale RiskLabAI commit in `uv.lock`.

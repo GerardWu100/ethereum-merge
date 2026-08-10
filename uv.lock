@@ -801,8 +801,8 @@ wheels = [
 
 [[package]]
 name = "risklabai"
-version = "1.0.8"
-source = { git = "https://github.com/RiskLabAI/RiskLabAI.py#751737a77ba3a092943a648e88d479c8e6e7a5f0" }
+version = "2.0.3"
+source = { git = "https://github.com/RiskLabAI/RiskLabAI.py#628092fde42fb870aed93efed9de400795129be7" }
 dependencies = [
     { name = "joblib" },
     { name = "numba" },
@@ -811,7 +811,9 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "statsmodels" },
+    { name = "sympy" },
     { name = "ta" },
+    { name = "tqdm" },
 ]
 
 [[package]]
