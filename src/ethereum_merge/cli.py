@@ -13,22 +13,22 @@ from .pipeline import run_pipeline
 def build_smoke_overrides() -> dict[str, Any]:
     """Return smoke-test overrides loaded from config.toml."""
     overrides = load_smoke_overrides()
-    overrides['SMOKE_TEST_MODE'] = True
+    overrides["SMOKE_TEST_MODE"] = True
     return overrides
 
 
 def main() -> None:
     """Run the project pipeline from the command line."""
-    parser = argparse.ArgumentParser(description='Run the notebook-derived pipeline.')
+    parser = argparse.ArgumentParser(description="Run the notebook-derived pipeline.")
     parser.add_argument(
-        '--smoke',
-        action='store_true',
-        help='Run with smaller verification settings when supported.',
+        "--smoke",
+        action="store_true",
+        help="Run with smaller verification settings when supported.",
     )
     parser.add_argument(
-        '--print-keys',
-        action='store_true',
-        help='Print the final context keys after execution.',
+        "--print-keys",
+        action="store_true",
+        help="Print the final context keys after execution.",
     )
     args = parser.parse_args()
 
@@ -39,5 +39,5 @@ def main() -> None:
         pprint(sorted(context.keys()))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
