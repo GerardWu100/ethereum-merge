@@ -167,31 +167,32 @@
 </head><body>
 <div class="wrap">
 
-<p class="eyebrow"><span class="dot"></span>ethereum-merge &middot; structure and behaviour &middot; code walkthrough</p>
+<p class="eyebrow"><span class="dot"></span>ethereum-merge &middot; structure and behaviour &middot; code guide</p>
 <h1>The Merge pipeline: reading the code</h1>
-<p class="lede">What this project computes, how the eight steps fit together, which settings matter, and where the sharp edges are.</p>
+<p class="lede">What the project computes, how its eight steps connect, which settings matter, and where it can fail.</p>
 
 <div class="box def">
   <span class="k">How to use this</span>
-  <p>Sections follow execution order, which is also file order. Every code snippet is copied from the
-  file named above it. Every number in a grey <b>Sample data</b> box was printed by running
-  <code>uv run ethereum-merge --smoke</code> on the parquet files bundled in <code>data/processed/</code>;
-  nothing here is estimated. Coloured boxes flag modelling choices and traps.</p>
+  <p>Sections follow execution order and file order. Each code snippet is copied from the file named
+  above it. Every number in a grey <b>Sample data</b> box came from
+  <code>uv run ethereum-merge --smoke</code> run on Parquet files, a column-oriented data format, in
+  <code>data/processed/</code>; no number is estimated. Coloured boxes mark modelling choices and
+  traps.</p>
 </div>
 
 <div class="box why">
   <span class="k">The process in plain English</span>
-  <p>Ethereum switched from proof of work to proof of stake on 15 September 2022, an event known as
-  the Merge. The project asks a measurable question about it: does the futures basis - the gap
-  between the futures price and the spot price - help predict how volatile the next 24 hours will
-  be, and did that relationship change for Ethereum after the Merge in a way it did not change for
-  Bitcoin?</p>
-  <p>To answer it the code loads one-minute spot prices and hourly quarterly futures for both coins,
-  stitches the quarterly contracts into one continuous price series, computes the basis and the
-  volatility of the following 24 hours at every hour, and then runs a difference-in-differences
-  regression with Bitcoin as the control group. Three side analyses follow: a structural break test
-  on the basis, a machine-learning exercise that scores which feature groups carry signal, and a
-  chart that inspects whether the two coins moved in parallel before the Merge.</p>
+  <p>Ethereum switched from proof of work to proof of stake on 15 September 2022. This event is
+  called the Merge. The project asks whether the futures basis—the gap between the futures price
+  and the spot price—helps predict volatility over the next 24 hours. It also asks whether that
+  relationship changed for Ethereum after the Merge but not for Bitcoin.</p>
+  <p>The code loads one-minute spot prices and hourly quarterly futures for both coins, joins the
+  quarterly contracts into one continuous price series, computes the basis and next-24-hour
+  volatility, and runs a difference-in-differences regression, which compares before-and-after
+  changes across groups, with Bitcoin as the control group, the comparison group. Three side
+  analyses test for a structural break—a change in a series' behaviour—in the basis, measure which
+  feature groups help a machine-learning model that learns patterns from data, and
+  show whether the two coins moved in parallel before the Merge.</p>
 </div>
 
 <h2 id="map"><span class="sec-no">00</span>Map</h2>
@@ -211,38 +212,38 @@ flowchart LR
   meta --> out
   causal --> out
 </div>
-<p class="fnote">Cylinders are files on disk, boxes are pipeline steps, arrows are the direction data
-moves. The two-digit prefix is the step-script number. Note that step 03 (dollar bars) feeds only a
-figure: nothing downstream reads it.</p>
+<p class="fnote">Cylinders are files on disk, boxes are pipeline steps, and arrows show data flow. The
+two-digit prefix is the step-script number. Step 03 (dollar bars) feeds only a figure; later steps
+do not read it.</p>
 
 <div class="toc">
   <div class="rk">Contents</div>
   <ol>
-    <li><a href="#run">How a run happens &mdash; <code>cli.py</code>, <code>pipeline.py</code>, <code>config.py</code></a></li>
+    <li><a href="#run">How a run works &mdash; <code>cli.py</code>, <code>pipeline.py</code>, <code>config.py</code></a></li>
     <li><a href="#s01">Step 01 &mdash; shared imports and the analysis calendar</a></li>
-    <li><a href="#s02">Step 02 &mdash; loading spot and futures</a></li>
+    <li><a href="#s02">Step 02 &mdash; loading spot and futures prices</a></li>
     <li><a href="#s03">Step 03 &mdash; dollar bars</a></li>
-    <li><a href="#s04">Step 04 &mdash; stitching quarterly futures into one series</a></li>
+    <li><a href="#s04">Step 04 &mdash; joining quarterly futures into one series</a></li>
     <li><a href="#s05">Step 05 &mdash; basis and forward realized volatility</a></li>
-    <li><a href="#s06">Step 06 &mdash; structural breaks and the DiD regression</a></li>
-    <li><a href="#s07">Step 07 &mdash; meta-labelling and clustered feature importance</a></li>
-    <li><a href="#s08">Step 08 &mdash; parallel trends chart</a></li>
+    <li><a href="#s06">Step 06 &mdash; structural breaks and the difference-in-differences regression</a></li>
+    <li><a href="#s07">Step 07 &mdash; meta-labelling and grouped feature importance</a></li>
+    <li><a href="#s08">Step 08 &mdash; parallel-trends chart</a></li>
     <li><a href="#helpers">Data preparation helper &mdash; <code>convert_raw_to_parquet.py</code></a></li>
     <li><a href="#config">Settings that change the answer</a></li>
     <li><a href="#fixes">Fixes applied</a></li>
     <li><a href="#callgraph">Call graph</a></li>
     <li><a href="#edge">Edge cases</a></li>
-    <li><a href="#traps">Traps and gotchas</a></li>
+    <li><a href="#traps">Traps</a></li>
     <li><a href="#limits">Limitations, stated honestly</a></li>
     <li><a href="#verify">Verification</a></li>
   </ol>
 </div>
 
-<h2 id="run"><span class="sec-no">01</span>How a run happens &mdash; <code>cli.py</code>, <code>pipeline.py</code>, <code>config.py</code></h2>
+<h2 id="run"><span class="sec-no">01</span>How a run works &mdash; <code>cli.py</code>, <code>pipeline.py</code>, <code>config.py</code></h2>
 
-<p>The project is a notebook that was cut into eight numbered files. It is not a library of
-importable functions: it is a script that runs top to bottom, split across files. The three files in
-<code>src/ethereum_merge/</code> exist only to make that run happen.</p>
+<p>The project started as a notebook and is now split across eight numbered files. It is a script
+that runs from top to bottom, not a library of importable functions. The three files in
+<code>src/ethereum_merge/</code> support that run.</p>
 
 <pre>def run_pipeline(context_overrides: dict[str, Any] | None = None) -&gt; dict[str, Any]:
     <span class="c">"""Run each generated step script with a shared notebook-style context.</span>
@@ -264,15 +265,14 @@ importable functions: it is a script that runs top to bottom, split across files
     return context</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p><code>run_pipeline</code> reads the eight step files in numbered order and runs each one inside the
-same shared bag of variables, so a variable created in step 02 is still there in step 07 &mdash;
-exactly like cells in a notebook.</p></div>
+<p><code>run_pipeline</code> reads the eight step files in numbered order and runs them in one shared
+set of variables. A variable created in step 02 is still available in step 07, as it would be in a
+notebook.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> an optional dictionary of overrides (the only one used in practice is the smoke-test
-window). <b>Output:</b> the final dictionary of every variable the eight steps created.
-<b>Role:</b> it is the whole program; <code>cli.py</code> and <code>notebooks/demo.ipynb</code> are
-one-line wrappers around it.</p></div>
+<p><b>Input:</b> an optional dictionary of overrides. In practice, it supplies the smoke-test
+window. <b>Output:</b> the final dictionary of variables created by the eight steps.
+<b>Role:</b> it is the whole program; <code>cli.py</code> and <code>notebooks/demo.ipynb</code> call it.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -288,22 +288,22 @@ one-line wrappers around it.</p></div>
 'np', 'pd', 'plt', 'sns', 'smf'   &lt;- modules live here too</pre></div>
 </div>
 <p>The returned dictionary holds 118 names that do not start with an underscore. Imported modules
-sit in the same dictionary as the data frames, because <code>exec</code> puts everything a step
-creates, including its imports, into the shared namespace.</p></div>
+share the dictionary with the data frames because <code>exec</code> puts every name a step creates,
+including imports, into the same namespace.</p></div>
 
 <div class="box why"><span class="k">Why <code>exec</code> and not ordinary imports</span>
-<p>The step files are not valid modules on their own: step 04 uses <code>pd</code> without importing
-it, and every step reads globals such as <code>FIG_DIR</code> that no step defines locally. Running
-them with <code>exec</code> into one dictionary reproduces notebook behaviour without rewriting the
-research code. The cost is that static tools cannot check the files, and your editor will mark most
-names as undefined.</p></div>
+<p>The step files are not valid modules on their own. Step 04 uses <code>pd</code> without importing
+it, and every step reads global names such as <code>FIG_DIR</code> that no step defines locally.
+Running them with <code>exec</code> in one dictionary preserves the notebook behaviour without
+rewriting the research code. The cost is that static tools cannot check the files and editors mark
+many names as undefined.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
 <p>Order comes from <code>sorted(glob("*.py"))</code>, so it is <em>lexical</em>, not numeric. The
-two-digit prefixes (<code>01_</code> to <code>08_</code>) are what keep it correct. A ninth file
+two-digit prefixes (<code>01_</code> to <code>08_</code>) make that order correct. A ninth file
 named <code>9_extra.py</code> would sort before <code>10_...</code> but after <code>08_...</code>;
 a file named <code>10_extra.py</code> would sort <em>before</em> <code>9_extra.py</code>. Keep the
-zero padding.</p></div>
+leading zero.</p></div>
 
 <h3><code>build_execution_context</code> &mdash; the starting bag of variables</h3>
 
@@ -316,21 +316,21 @@ zero padding.</p></div>
     smoke_test_mode = bool(overrides.get("SMOKE_TEST_MODE", False))</pre>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> a <code>ProjectConfig</code> holding paths, plus the override dictionary.
+<p><b>Input:</b> a <code>ProjectConfig</code> containing paths and the override dictionary.
 <b>Output:</b> the dictionary the steps start from: <code>PROJECT_ROOT</code>,
 <code>DATA_DIR</code>, <code>PROCESSED_DATA_DIR</code>, <code>OUTPUTS_DIR</code>,
 <code>FIGURES_DIR</code>, <code>TABLES_DIR</code>, <code>OVERRIDES</code>,
-<code>SMOKE_TEST_MODE</code>. <b>Role:</b> it is the only bridge between the tidy package layer and
-the notebook-style research code.</p></div>
+<code>SMOKE_TEST_MODE</code>. <b>Role:</b> it connects the package layer to the notebook-style
+research code.</p></div>
 
 <div class="box why"><span class="k">Why the paths are computed, not typed in</span>
-<p><code>project_root()</code> is <code>Path(__file__).resolve().parents[2]</code> &mdash; two levels
-up from <code>src/ethereum_merge/config.py</code>. Every input and output path is derived from it,
-so the pipeline works from any working directory and on any machine. The <code>or {}</code> in
-<code>dict(context_overrides or {})</code> also avoids a mutable default argument, which is the
-classic Python bug where a dictionary written as a default value is shared between calls.</p></div>
+<p><code>project_root()</code> is <code>Path(__file__).resolve().parents[2]</code>, two levels up
+from <code>src/ethereum_merge/config.py</code>. Every input and output path comes from it, so the
+pipeline works from any working directory and on any machine. The <code>or {}</code> in
+<code>dict(context_overrides or {})</code> also avoids a mutable default argument: a dictionary used
+as a default would be shared between calls.</p></div>
 
-<h2 id="s01"><span class="sec-no">02</span>Step 01 &mdash; shared imports and the analysis calendar</h2>
+<h2 id="s01"><span class="sec-no">02</span>Step 01 &mdash; shared imports and analysis dates</h2>
 
 <pre>import matplotlib.pyplot as plt
 import numpy as np
@@ -348,23 +348,23 @@ FIG_DIR = str(FIGURES_DIR)
 TAB_DIR = str(TABLES_DIR)</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>This file is the notebook's first cell: it imports the libraries every later step relies on, fixes
-the plotting style, and defines the three dates the whole study is built around.</p></div>
+<p>This is the notebook's first cell. It imports the libraries used later, sets the plotting style,
+and defines the three dates used throughout the study.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> the path variables placed in the namespace by <code>build_execution_context</code>.
+<p><b>Input:</b> the path variables that <code>build_execution_context</code> puts in the namespace.
 <b>Output:</b> <code>np</code>, <code>pd</code>, <code>plt</code>, <code>sns</code>,
 <code>MERGE_DATE</code>, <code>ANALYSIS_START</code>, <code>ANALYSIS_END</code>, and the two string
 output directories. <b>Role:</b> everything downstream depends on it.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
-<p><code>MERGE_DATE</code> is midnight on 15 September 2022 in whatever timezone the parquet
-timestamps use. The Merge itself completed at roughly 06:43 UTC that morning. Observations between
-midnight and that moment are labelled post-Merge here. With hourly data that is about seven rows out
-of 336 pre-Merge rows in the smoke window, so it will not move a coefficient much, but it is a real
-mislabelling.</p></div>
+<p><code>MERGE_DATE</code> is midnight on 15 September 2022 in the timezone used by the Parquet
+timestamps. The Merge completed at roughly 06:43 Coordinated Universal Time (UTC) that morning, so observations between
+midnight and then are labelled post-Merge. With hourly data, that is about seven rows out of 336
+pre-Merge rows in the smoke window. The effect on a coefficient should be small, but the labels are
+wrong for those rows.</p></div>
 
-<h2 id="s02"><span class="sec-no">03</span>Step 02 &mdash; loading spot and futures</h2>
+<h2 id="s02"><span class="sec-no">03</span>Step 02 &mdash; loading spot and futures prices</h2>
 
 <pre>def load_frd_spot(ticker: str, directory: str) -&gt; pd.DataFrame:
     <span class="c">"""Load one-minute spot prices from a processed parquet file."""</span>
@@ -396,14 +396,14 @@ def load_futures_contracts(file_pattern: str) -&gt; pd.DataFrame:
         contracts_list.append(df)</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Read the price files off disk, trim them to the requested date window, and tag each futures file
-with the month its contract expires so later steps know which contract is which.</p></div>
+<p>Read the price files, trim them to the requested dates, and label each futures file with its
+contract's expiry month.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> a folder of parquet files. <b>Output:</b> two spot frames indexed by minute
+<p><b>Input:</b> a folder of Parquet files. <b>Output:</b> two spot frames indexed by minute
 (<code>btc_spot_hf</code>, <code>eth_spot_hf</code>) and two stacked futures frames with an
 <code>expiry</code> column (<code>btc_all_contracts</code>, <code>eth_all_contracts</code>).
-<b>Role:</b> the only place the project touches disk for inputs.</p></div>
+<b>Role:</b> the only code that reads input files.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -422,23 +422,22 @@ datetime
 expiry counts:  2022-09 -&gt; 705 rows
                 2022-12 -&gt; 550 rows   &lt;- only two contracts survive the smoke window</pre></div>
 </div>
-<p>In the smoke window the spot frames hold 64,800 rows each: 45 days times 1,440 minutes. The
-futures frames hold 1,255 rows each. All 19 quarterly files per coin are opened; 17 of them return
-zero rows after trimming and contribute nothing but an empty frame to the concatenation.</p></div>
+<p>In the smoke window, each spot frame has 64,800 rows: 45 days times 1,440 minutes. Each futures
+frame has 1,255 rows. The code opens all 19 quarterly files per coin; 17 have zero rows after
+trimming and add only an empty frame.</p></div>
 
 <div class="box why"><span class="k">Why the expiry is parsed out of the filename</span>
-<p>A file is named
+<p>A file has a name such as
 <code>DA-16_ETH_USDT_..._hourly_2022-09_2022-12_binance_quarterly.parquet</code>. Splitting on
 <code>_hourly_</code> and taking the second underscore-separated token gives <code>2022-12</code>,
-the expiry month. The parquet columns themselves carry <code>original_symbol</code> such as
-<code>ETHUSDT_220930</code>, which encodes the same thing, so the filename convention is a
-dependency the code did not have to take on. Rename the files and the pipeline silently produces
-wrong contract labels.</p></div>
+the expiry month. The Parquet columns also contain <code>original_symbol</code>, such as
+<code>ETHUSDT_220930</code>, which carries the same information. The code uses the filename instead.
+Renaming the files silently creates wrong contract labels.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
-<p>A missing spot file does not raise. It prints <code>File not found</code> and returns an empty
-frame, and the failure only surfaces several steps later as a confusing error inside the dollar-bar
-builder. Check the printed row counts at the top of any run.</p></div>
+<p>A missing spot file does not raise an error immediately. The code prints <code>File not found</code>
+and returns an empty frame. The failure appears later inside the dollar-bar builder. Check the row
+counts printed at the start of a run.</p></div>
 
 <h2 id="s03"><span class="sec-no">04</span>Step 03 &mdash; dollar bars</h2>
 
@@ -461,22 +460,22 @@ builder. Check the printed row counts at the top of any run.</p></div>
     ).copy()</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Instead of one row per minute, make one row per fixed amount of money traded. Quiet hours produce
-few rows and busy hours produce many, so each row carries a similar amount of information.</p></div>
+<p>A dollar bar groups trades until a fixed dollar value has changed hands, rather than grouping one
+row per minute. Quiet periods produce fewer rows and busy periods produce more.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
 <p><b>Input:</b> a minute-by-minute spot frame. <b>Output:</b> a bar frame and the dollar threshold
-used to build it. <b>Role:</b> feeds one figure and nothing else. No later step reads
+used to build it. <b>Role:</b> feeds one figure only. No later step reads
 <code>btc_dollar_bars</code> or <code>eth_dollar_bars</code>.</p></div>
 
 <div class="box def"><span class="k">The formula</span>
-<p>Turnover in minute $t$ and the threshold:</p>
+<p>Dollar turnover in minute $t$ and the threshold:</p>
 <p>$$D_t = P_t \, V_t, \qquad \theta = Q_{0.80}\big(\{D_t\}\big)$$</p>
-<p>A new bar is closed as soon as the running sum of turnover since the last bar reaches $\theta$:</p>
+<p>The code closes a bar when turnover since the previous bar reaches $\theta$:</p>
 <p>$$\sum_{u=\tau_{k-1}+1}^{\tau_k} D_u \;\ge\; \theta \;\Longrightarrow\; \text{bar } k \text{ closes at } \tau_k$$</p>
-<p class="fnote">$P_t$ is the closing price of minute $t$ in US dollars, $V_t$ is the coin volume
-traded in that minute, so $D_t$ is dollars traded. $Q_{0.80}$ is the 80th percentile: the level
-that 80 per cent of minutes fall below. $\tau_k$ is the minute at which bar $k$ closes.</p></div>
+<p class="fnote">$P_t$ is the closing price of minute $t$ in US dollars. $V_t$ is the coin volume
+traded in that minute, so $D_t$ is dollars traded. $Q_{0.80}$ is the 80th percentile: 80 per cent
+of minutes have lower turnover. $\tau_k$ is the minute when bar $k$ closes.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io stack">
@@ -486,26 +485,25 @@ that 80 per cent of minutes fall below. $\tau_k$ is the minute at which bar $k$ 
 1 2022-09-01 00:02:00            3  1554.69  1558.30  1554.69  1558.30           996.9663             1552489.6638  586581.8114
 2 2022-09-01 00:03:00            4  1561.88  1561.88  1561.88  1561.88           936.2530             1462314.8356  586581.8114</pre></div>
 </div>
-<p>ETH threshold 586,581.81 dollars, BTC threshold 767,112.89 dollars. From 64,800 minutes the
-builder produced 26,219 ETH bars and 25,949 BTC bars &mdash; roughly one bar every 2.5 minutes on
-average, but far denser around the Merge.</p></div>
+<p>The ETH threshold is 586,581.81 dollars and the BTC threshold is 767,112.89 dollars. From 64,800
+minutes, the builder produced 26,219 ETH bars and 25,949 BTC bars—about one bar every 2.5 minutes
+on average, with more bars around the Merge.</p></div>
 
 <div class="box why"><span class="k">Why a percentile and not a round number</span>
-<p>A fixed threshold such as one million dollars means something different for Bitcoin than for
-Ethereum, and something different in 2021 than in 2025. Taking the 80th percentile of one-minute
-turnover makes the threshold scale with the asset and the sample automatically.</p></div>
+<p>A fixed threshold such as one million dollars means different things for Bitcoin and Ethereum,
+and in 2021 and 2025. Taking the 80th percentile of one-minute turnover scales the threshold to the
+asset and sample.</p></div>
 
 <div class="box flag"><span class="k">The weakness, stated honestly</span>
-<p>The threshold is computed from the whole sample, including the future. For a chart of sampling
-density that is harmless. It would not be acceptable if these bars fed a trading rule, because the
-bar boundaries in 2021 would depend on turnover observed in 2025. Since nothing downstream consumes
-the bars, this stays a presentational choice rather than a leak into the results.</p></div>
+<p>The threshold uses the whole sample, including future data. That is harmless for a sampling-density
+chart. It would be invalid for a trading rule because 2021 bar boundaries would depend on turnover
+from 2025. Since later steps do not use the bars, this does not leak into the results.</p></div>
 
-<h2 id="s04"><span class="sec-no">05</span>Step 04 &mdash; stitching quarterly futures into one series</h2>
+<h2 id="s04"><span class="sec-no">05</span>Step 04 &mdash; joining quarterly futures into one series</h2>
 
-<p>Quarterly futures expire. To get one price history spanning years you must chain contracts
-together and remove the artificial jump that happens when you switch from one to the next. This step
-is the most intricate in the project, so it gets its own small diagram.</p>
+<p>Quarterly futures contracts expire. To build one multi-year price history, the code joins the
+contracts and removes the artificial jump at each switch. This is the most involved step, so it has
+its own diagram.</p>
 
 <div class="mermaid">
 flowchart TD
@@ -515,10 +513,10 @@ flowchart TD
   d --> e["drop overlapping timestamps"]
   e --> f["raw_price and adjusted_price"]
 </div>
-<p class="fnote">Top to bottom is the order the code runs. Every box is a block inside
+<p class="fnote">The code runs from top to bottom. Each box is a block inside
 <code>create_continuous_futures</code>.</p>
 
-<h3><code>find_roll_point</code> &mdash; when to switch contracts</h3>
+<h3><code>find_roll_point</code> &mdash; choose when to switch contracts</h3>
 
 <pre>def find_roll_point(current_data, next_data, expiry_date, roll_days=14):
     <span class="c">"""Pick the roll timestamp in the overlap window closest to the ideal pre-expiry date."""</span>
@@ -532,14 +530,13 @@ flowchart TD
     return max(candidates) if candidates else min(overlap_sorted)</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Switch to the next contract about two weeks before the current one expires, but only at a moment
-when both contracts are actually quoted. If there is no such moment that early, switch at the first
-moment both are quoted.</p></div>
+<p>Switch to the next contract about two weeks before expiry, but only when both contracts have a
+quote. If no such time exists by then, switch at the first time both have a quote.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> the two contracts' frames, the current contract's expiry date, and the number of
-days before expiry to aim for. <b>Output:</b> one timestamp, or <code>None</code> when the two
-contracts never trade at the same hour. <b>Role:</b> defines where each segment is cut.</p></div>
+<p><b>Input:</b> the two contract frames, the current expiry date, and the target number of days
+before expiry. <b>Output:</b> one timestamp, or <code>None</code> if the contracts never trade in
+the same hour. <b>Role:</b> chooses where each segment ends.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -552,20 +549,20 @@ overlap first      2022-09-23 02:00
 overlap last       2022-09-30 08:00</pre></div>
 <div><span class="lab">out &mdash; chosen roll time</span>
 <pre>2022-09-23 02:00   &lt;- the fallback branch fired</pre>
-<p class="fnote">No overlapping hour falls on or before 16 September inside the smoke window, so
-<code>candidates</code> is empty and the code takes <code>min(overlap_sorted)</code> instead.</p></div>
+<p class="fnote">No overlapping hour falls on or before 16 September in the smoke window, so
+<code>candidates</code> is empty and the code uses <code>min(overlap_sorted)</code>.</p></div>
 </div>
-<p>Of the September contract's 705 hourly rows, 531 are kept; the December contract contributes its
+<p>Of the September contract's 705 hourly rows, 531 remain. The December contract contributes its
 549 rows after the roll.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
 <p><code>expiry_date</code> is derived as <code>pd.to_datetime(expiry + "-01") + MonthEnd(0)</code>,
 which gives 30 September 2022 at midnight. Binance quarterly contracts settle at 08:00 UTC on the
-last Friday of the month, which is 30 September 2022 for this contract. The derived date is right by
-luck here; for a quarter ending on a weekend it would be a day or two late. The roll is 14 days
-early, so the error never bites, but the constant is not what its name promises.</p></div>
+last Friday of the month, also 30 September 2022 for this contract. The derived date is only right
+by chance; for a quarter ending on a weekend it would be a day or two late. The roll is 14 days
+early, so this does not affect the result here, but the variable name is misleading.</p></div>
 
-<h3><code>create_continuous_futures</code> &mdash; the backward adjustment</h3>
+<h3><code>create_continuous_futures</code> &mdash; adjust earlier prices</h3>
 
 <pre>            next_contract = contracts[index + 1]
             roll_time = segment["datetime"].max()
@@ -602,27 +599,26 @@ early, so the error never bites, but the constant is not what its name promises.
             segment["adjustment"] = adjustment</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Start from the newest contract and work backwards. At each switch, measure how much dearer the
-next contract is than the one being retired at the same instant, and shift the entire older history
-up by that amount so the chart has no artificial step.</p></div>
+<p>Start with the newest contract and work backwards. At each switch, measure the price gap between
+the new and old contracts at the same instant. Add that gap to the entire older history.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
 <p><b>Input:</b> the stacked contracts frame. <b>Output:</b> one frame with columns
 <code>datetime</code>, <code>raw_price</code>, <code>adjusted_price</code>,
-<code>adjustment</code>, <code>contract</code>. <b>Role:</b> <code>adjusted_price</code> is plotted;
-<code>raw_price</code> is what step 05 uses to compute the basis.</p></div>
+<code>adjustment</code>, <code>contract</code>. <b>Role:</b> step 05 plots
+<code>adjusted_price</code> and uses <code>raw_price</code> to compute the basis.</p></div>
 
 <div class="box def"><span class="k">The formula</span>
 <p>Index the contracts $i = 1, \dots, n$ from oldest to newest, with roll time $\tau_i$ between
-contract $i$ and contract $i+1$. The newest contract is left alone, and each older one is shifted by
-the gap measured at its own roll:</p>
+contract $i$ and contract $i+1$. The newest contract stays unchanged. Each older contract is
+shifted by the gap at its roll:</p>
 <p>$$a_n = 0, \qquad a_i = \tilde{P}^{\,i+1}(\tau_i) - P^{\,i}(\tau_i)$$</p>
 <p>$$\tilde{P}^{\,i}(t) = P^{\,i}(t) + a_i$$</p>
 <p class="fnote">$P^{\,i}(t)$ is the raw closing price of contract $i$ at hour $t$, in US dollars.
-$\tilde{P}^{\,i}(t)$ is its adjusted price. $a_i$ is the adjustment in dollars, and because
-$\tilde{P}^{\,i+1}$ already contains $a_{i+1}$, the shifts accumulate as you walk back through
-history. This is the standard additive, or "Panama", roll adjustment. Returns computed within one
-segment are unchanged by $a_i$, since a constant cancels in a difference.</p></div>
+$\tilde{P}^{\,i}(t)$ is its adjusted price. $a_i$ is the dollar adjustment. Because
+$\tilde{P}^{\,i+1}$ already includes $a_{i+1}$, the adjustments accumulate as the code moves back
+through history. This is the standard additive, or "Panama", roll adjustment. Returns within one
+contract segment do not change by $a_i$ because the same constant is added to both prices.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -637,27 +633,27 @@ Dec contract at 03:00 1346.69</pre></div>
 530 2022-09-23 02:00:00    1323.60         1328.86        5.26  2022-09
 531 2022-09-23 03:00:00    1346.69         1346.69        0.00  2022-12
 532 2022-09-23 04:00:00    1343.82         1343.82        0.00  2022-12</pre>
-<p class="fnote">$a = 1328.86 - 1323.60 = 5.26$, and $1323.60 + 5.26 = 1328.86$, so the adjusted
-September price meets the December price exactly at the roll instant.</p></div>
+<p class="fnote">$a = 1328.86 - 1323.60 = 5.26$, and $1323.60 + 5.26 = 1328.86$. The adjusted
+September price therefore meets the December price at the roll.</p></div>
 </div>
-<p>ETH ends with 1,080 hourly rows over the smoke window: 531 from the September contract and 549
-from the December contract. The BTC adjustment over the same roll is 23.00 dollars.</p></div>
+<p>ETH has 1,080 hourly rows in the smoke window: 531 from September and 549 from December. The BTC
+adjustment at the same roll is 23.00 dollars.</p></div>
 
 <div class="box why"><span class="k">Why the last block drops overlapping timestamps</span>
-<p>Both contracts are quoted during the overlap, so a naive concatenation would give two rows for
-the same hour. The final loop keeps only rows strictly later than the previous segment's last
-timestamp, which guarantees exactly one active contract per hour. Without it, the merge in step 05
-would duplicate rows and quietly double-count observations in the regression.</p></div>
+<p>Both contracts have quotes during the overlap, so simple concatenation would create two rows for
+one hour. The final loop keeps only rows strictly later than the previous segment's last timestamp.
+That leaves one active contract per hour. Without it, step 05 would duplicate rows and double-count
+observations in the regression.</p></div>
 
 <div class="box warn"><span class="k">Trap that was fixed here</span>
-<p>The original code read the next contract's price from the first bar <em>after</em> the roll,
-not at the roll. For this ETH roll that meant $1346.69 - 1323.60 = 23.09$ instead of $5.26$: the
-December contract's one-hour move of 17.83 dollars was baked into the adjustment and then applied to
-every earlier hour in the series. See <a href="#fixes">Fixes applied</a>.</p></div>
+<p>The original code used the next contract's first bar <em>after</em> the roll, not its price at the
+roll. For this ETH roll, that gave $1346.69 - 1323.60 = 23.09$ instead of $5.26$. The December
+contract's one-hour move of 17.83 dollars was then added to every earlier hour. See
+<a href="#fixes">Fixes applied</a>.</p></div>
 
-<h2 id="s05"><span class="sec-no">06</span>Step 05 &mdash; basis and forward realized volatility</h2>
+<h2 id="s05"><span class="sec-no">06</span>Step 05 &mdash; basis and next-period volatility</h2>
 
-<p>This is the step that creates the two quantities the study is about.</p>
+<p>This step creates the two quantities used in the study.</p>
 
 <pre>def calculate_rolling_rv_vectorized(hf_data, target_timestamps, window_hours=24):
     <span class="c">"""Compute forward annualized realized volatility aligned to hourly targets."""</span>
@@ -683,33 +679,31 @@ every earlier hour in the series. See <a href="#fixes">Fixes applied</a>.</p></d
     return aligned_rv.values</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>At every hour, look forward over the next 24 hours of minute prices, add up the squared moves,
-take the square root, and scale it to a yearly number so it can be read like an option volatility.</p></div>
+<p>For each hour, look at the next 24 hours of minute prices, add the squared moves, take the square
+root, and scale the result to a yearly number.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> a minute-indexed spot frame and the list of hourly timestamps to report on.
+<p><b>Input:</b> a spot frame indexed by minute and the hourly timestamps to report.
 <b>Output:</b> a plain numpy array, one number per requested timestamp, aligned by position.
-<b>Role:</b> it produces the dependent variable of the regression, <code>forward_vol_24h</code>.</p></div>
+<b>Role:</b> it produces the regression's outcome, <code>forward_vol_24h</code>.</p></div>
 
 <div class="box def"><span class="k">The formula</span>
-<p>The one-minute log return, the forward realized variance over $h$ minutes, and its annualized
-form:</p>
+<p>The one-minute log return, realized variance over $h$ future minutes, and annualized volatility:</p>
 <p>$$r_u = \ln\!\left(\frac{P_u}{P_{u-1}}\right), \qquad
 RV_{t,h} = \sum_{u=t+1}^{t+h} r_u^{2}, \qquad
 \sigma_{t,h} = \sqrt{RV_{t,h}} \times \sqrt{\frac{525600}{h}}$$</p>
 <p class="fnote">$P_u$ is the spot price at minute $u$ in US dollars. $r_u$ is its log return, a pure
 number. $h$ is the window length in minutes: 1,440 for 24 hours, 10,080 for 168 hours. $RV_{t,h}$ is
-the realized variance over the window that <em>starts</em> at $t$. The constant 525,600 is the
-number of minutes in a 365-day year, so $\sqrt{525600/h}$ converts a window figure into an annual
-one; for $h = 1440$ it equals 19.1050. $\sigma_{t,h}$ is therefore an annualized volatility, where
-1.00 means 100 per cent a year.</p></div>
+the realized variance in the window that <em>starts</em> at $t$. The constant 525,600 is the number
+of minutes in a 365-day year, so $\sqrt{525600/h}$ annualizes the window; for $h = 1440$ it equals
+19.1050. $\sigma_{t,h}$ is annualized volatility, where 1.00 means 100 per cent a year.</p></div>
 
 <div class="box def"><span class="k">The formula &mdash; basis</span>
 <p>$$b_t = \frac{F_t - S_t}{S_t}$$</p>
-<p class="fnote">$F_t$ is the raw quarterly futures price at hour $t$ (<code>raw_price</code>), $S_t$
-is the spot price at the same hour (<code>spot_price</code>), both in US dollars. $b_t$ is a
-fraction: positive means futures trade above spot, which is called contango; negative means below,
-which is called backwardation.</p></div>
+<p class="fnote">$F_t$ is the raw quarterly futures price at hour $t$ (<code>raw_price</code>), and
+$S_t$ is the spot price at the same hour (<code>spot_price</code>), both in US dollars. $b_t$ is a
+fraction. A positive value means futures trade above spot, called contango; a negative value means
+they trade below spot, called backwardation.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -726,26 +720,24 @@ which is called backwardation.</p></div>
 <p class="fnote">Row check: $(1530.25 - 1551.94)/1551.94 = -0.013976$, which rounds to
 $-0.0140$.</p></div>
 </div>
-<p>An independent recomputation of the 24-hour forward volatility at 2022-09-05 04:00, done outside
-the pipeline, returns 0.6515491462566797 against the pipeline's 0.6515491462566797 &mdash; identical
-to the last digit.</p></div>
+<p>An independent calculation of the 24-hour forward volatility at 2022-09-05 04:00 returns
+0.6515491462566797, matching the pipeline's 0.6515491462566797 to the last digit.</p></div>
 
 <div class="box why"><span class="k">Why the outcome looks forward and the predictor does not</span>
-<p>At hour $t$ the regression uses the basis observed <em>at</em> $t$ to explain volatility realized
-<em>after</em> $t$. That direction is deliberate: the question is whether the basis predicts
-volatility. It is the opposite of look-ahead bias, where a future value is used to explain the
-present.</p></div>
+<p>At hour $t$, the regression uses the basis observed <em>at</em> $t$ to explain volatility realized
+<em>after</em> $t$. That matches the prediction question. It avoids look-ahead bias, which uses a
+future value to explain the present.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
-<p><code>resample("1min").ffill()</code> carries the last price forward across gaps in the data.
-Every filled minute contributes a zero return, so a data outage looks like perfect calm and pulls
-the volatility estimate down. Nothing in the code counts how many minutes were filled.</p></div>
+<p><code>resample("1min").ffill()</code> carries the last price across data gaps. Each filled minute
+contributes a zero return, so an outage looks calm and lowers the volatility estimate. The code does
+not count filled minutes.</p></div>
 
 <div class="box flag"><span class="k">The weakness, stated honestly</span>
-<p>The 24-hour forward window straddles the Merge for observations in the last day before it. Those
-rows carry <code>PostMerge = 0</code> but an outcome measured mostly after the event. The same
-applies over seven days for <code>forward_vol_168h</code>. A cleaner design would drop a window's
-worth of observations on each side of the event date.</p></div>
+<p>The 24-hour forward window crosses the Merge for observations in the last day before it. Those
+rows have <code>PostMerge = 0</code> but an outcome measured mostly after the event. The same issue
+lasts seven days for <code>forward_vol_168h</code>. A cleaner design would drop one window of
+observations on each side of the event.</p></div>
 
 <div class="box data"><span class="k">Sample data &mdash; what the pooled frame ends up as</span>
 <div class="io">
@@ -755,25 +747,23 @@ worth of observations on each side of the event date.</p></div>
 <div><span class="lab">out &mdash; pooled_data_clean</span>
 <pre>1,824 rows x 12 columns
 336 rows dropped   &lt;- 168 per asset</pre>
-<p class="fnote">168 hours is exactly seven days: the tail of the sample has no 168-hour forward
-window, so <code>dropna</code> removes it. The 24-hour column alone would have cost only 24 rows per
-asset.</p></div>
+<p class="fnote">168 hours is exactly seven days. The sample tail has no 168-hour forward window, so
+<code>dropna</code> removes it. Using only the 24-hour column would remove 24 rows per asset.</p></div>
 </div>
-<p>Table 1, written to <code>outputs/tables/01_descriptive_statistics.csv</code> on the smoke
+<p>Table 1, written to <code>outputs/tables/01_descriptive_statistics.csv</code> for the smoke
 window:</p>
 <pre>                    Obs  Mean Basis (%)  Std Basis (%)  Mean Vol (Ann %)  Std Vol (Ann %)
 BTC (Pre-Merge)     336         -0.0780         0.0576           55.6329          16.7121
 BTC (Post-Merge)    576          0.2476         0.2380           58.6061          22.4446
 ETH (Pre-Merge)     336         -1.2386         0.2160           80.1114          21.8917
 ETH (Post-Merge)    576         -0.2232         0.1511           74.7583          29.1241</pre>
-<p>Read the ETH rows: before the Merge, ETH futures traded on average 1.24 per cent <em>below</em>
-spot, and afterwards only 0.22 per cent below, while BTC's basis barely moved. That large negative
-basis is the well-documented pre-Merge hedging flow. The 336 and 576 counts are simply 14 days and
-24 days of hours.</p></div>
+<p>Before the Merge, ETH futures traded on average 1.24 per cent <em>below</em> spot; afterwards the
+gap was 0.22 per cent below. BTC's basis changed little. The large negative ETH basis reflects the
+documented pre-Merge hedging flow. The 336 and 576 counts are 14 and 24 days of hours.</p></div>
 
-<h2 id="s06"><span class="sec-no">07</span>Step 06 &mdash; structural breaks and the DiD regression</h2>
+<h2 id="s06"><span class="sec-no">07</span>Step 06 &mdash; structural breaks and the difference-in-differences regression</h2>
 
-<h3><code>compute_bsadf_path</code> &mdash; testing for a regime change in the basis</h3>
+<h3><code>compute_bsadf_path</code> &mdash; test for a change in the basis</h3>
 
 <pre>def compute_bsadf_path(
     log_series: pd.Series, min_window: int = 120, step: int = 5
@@ -796,28 +786,28 @@ basis is the well-documented pre-Merge hedging flow. The 336 and 576 counts are 
     return pd.Series(stats, index=pd.DatetimeIndex(timestamps), name="bsadf")</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Walk through the daily basis history one step at a time and, at each point, ask how strongly the
-series looks like it has stopped being stable and started trending explosively.</p></div>
+<p>Move through the daily basis history and ask at each point whether the series has stopped being
+stable and started rising explosively.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> a daily series of $\ln(1 + b_t)$. <b>Output:</b> a series of test statistics, one
-every <code>step</code> days. <b>Role:</b> it draws the structural-break figure. Its output does not
-enter the regression or any table.</p></div>
+<p><b>Input:</b> a daily series of $\ln(1 + b_t)$. <b>Output:</b> one test statistic every
+<code>step</code> days. <b>Role:</b> draws the structural-break figure. Its output does not enter
+the regression or a table.</p></div>
 
 <div class="box def"><span class="k">The formula</span>
-<p>The augmented Dickey-Fuller regression fitted on a window running from $r_1$ to $r_2$, with a
-constant and a time trend (that is what <code>constant="ct"</code> selects) and one lag:</p>
+<p>The augmented Dickey-Fuller (ADF) regression fits a window from $r_1$ to $r_2$, with a constant, a time
+trend (selected by <code>constant="ct"</code>), and one lag:</p>
 <p>$$\Delta y_u = \alpha + \beta u + \gamma\, y_{u-1} + \delta\, \Delta y_{u-1} + \varepsilon_u$$</p>
 <p>$$ADF_{r_1, r_2} = \frac{\hat{\gamma}}{\mathrm{se}(\hat{\gamma})}, \qquad
 \mathrm{BSADF}_{r_2} = \max_{\,r_1 \,\in\, [0,\; r_2 - r_0]} ADF_{r_1, r_2}$$</p>
 <p class="fnote">$y_u = \ln(1 + b_u)$ is the log of one plus the daily average basis. $\Delta$ is
-the one-day change. $\gamma$ measures pull back towards the past level: a $\gamma$ near zero or
-above means no pull, which is the explosive case. $\hat{\gamma}$ is its estimate and
-$\mathrm{se}(\hat{\gamma})$ its standard error, so the ratio is an ordinary t-statistic.
-$r_0$ is the minimum window length, <code>min_sample_length</code>. BSADF stands for backward
-supremum ADF: at each end point $r_2$ it takes the largest statistic over all admissible start
-points. Because the maximum is taken over many overlapping regressions, the usual Dickey-Fuller
-critical values do not apply, which is why the code uses an empirical reference line instead.</p></div>
+the one-day change. $\gamma$ measures pull toward the past level: a $\gamma$ near zero or above means
+no pull, which is the explosive case. $\hat{\gamma}$ is its estimate and
+$\mathrm{se}(\hat{\gamma})$ its standard error, so their ratio is a t-statistic.
+$r_0$ is the minimum window length, <code>min_sample_length</code>. BSADF means backward supremum
+augmented Dickey-Fuller. At each end point $r_2$, it takes the largest statistic over all allowed
+start points. Because it maximizes across many overlapping regressions, ordinary Dickey-Fuller
+critical values do not apply; the code uses an empirical reference line.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -830,15 +820,14 @@ step             5</pre></div>
 eth_bsadf_threshold = nan</pre></div>
 </div>
 <p>With 45 days of data and a 180-day minimum window, <code>range(180, 46, 5)</code> is empty, so the
-loop never executes. The figure <code>02_sadf_structural_break.png</code> is still written, with no
-lines on it and no warning printed. This is the clearest example of the pipeline failing quietly
-under the smoke settings.</p></div>
+loop never runs. The figure <code>02_sadf_structural_break.png</code> is still written with no lines
+and no warning. This is the clearest example of a silent failure under the smoke settings.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
-<p>The cost of this loop grows quickly: it refits the whole BSADF search at every fifth observation,
-and each search itself sweeps many start points. On the full four-year sample the daily series is
-roughly 1,550 points, so the loop runs about 275 times over ever-longer windows. This is the slowest
-part of a full run by a wide margin.</p></div>
+<p>This loop gets expensive quickly. It repeats the full BSADF search every fifth observation, and
+each search tests many start points. In the full four-year sample, the daily series has roughly 1,550
+points, so the loop runs about 275 times over growing windows. It is the slowest part of a full run
+by a wide margin.</p></div>
 
 <h3>The difference-in-differences regression</h3>
 
@@ -855,23 +844,22 @@ model = smf.ols(formula=formula, data=pooled_data_clean).fit(
 )</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Fit one line through both coins at once, with switches for "is this Ethereum" and "is this after
-the Merge". The coefficient on all three terms multiplied together answers the actual research
-question.</p></div>
+<p>Fit both coins in one model, with indicators for Ethereum and the post-Merge period. The
+coefficient on the product of all three terms answers the research question.</p></div>
 
 <div class="box def"><span class="k">The formula</span>
 <p>$$
 \sigma_{t,24h} = \beta_0 + \beta_1 b_t + \beta_2 D_t + \beta_3 E_t
 + \beta_4 b_t D_t + \beta_5 b_t E_t + \beta_6 D_t E_t + \beta_7 b_t D_t E_t + \varepsilon_t
 $$</p>
-<p class="fnote">$\sigma_{t,24h}$ is the annualized volatility of the next 24 hours. $b_t$ is the
-basis. $D_t$ is <code>PostMerge</code>, equal to 1 from 15 September 2022 onwards and 0 before.
-$E_t$ is <code>Ethereum</code>, equal to 1 for ETH rows and 0 for BTC rows. The one that matters is
-$\beta_7$: it is the change, after the Merge, in how strongly the basis maps into future volatility
-for Ethereum, over and above whatever changed for Bitcoin at the same time. <code>HAC</code> means
-heteroskedasticity and autocorrelation consistent standard errors; with
-<code>maxlags = 24</code> the estimator allows each hour's error to be correlated with the previous
-24 hours' errors, which is needed because consecutive 24-hour forward windows overlap.</p></div>
+<p class="fnote">$\sigma_{t,24h}$ is annualized volatility over the next 24 hours. $b_t$ is the
+basis. $D_t$ is <code>PostMerge</code>, equal to 1 from 15 September 2022 onward and 0 before.
+$E_t$ is <code>Ethereum</code>, equal to 1 for ETH rows and 0 for BTC rows. The key term is
+$\beta_7$: the post-Merge change in how strongly the basis maps to future Ethereum volatility,
+beyond any simultaneous change for Bitcoin. <code>HAC</code> means heteroskedasticity and
+autocorrelation consistent standard errors. With <code>maxlags = 24</code>, the estimator allows
+each hour's error to correlate with the previous 24 hours' errors because consecutive 24-hour
+forward windows overlap.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io stack">
@@ -886,24 +874,22 @@ basis:Ethereum               -87.3507    37.5489      -2.3263   0.0200   **
 PostMerge:Ethereum             0.1634     0.2009       0.8137   0.4158
 basis:PostMerge:Ethereum     153.7326    58.1484       2.6438   0.0082  ***</pre></div>
 </div>
-<p>These come from 1,824 rows spanning six weeks around the Merge, not the full sample, so treat
-them as proof the code runs rather than as a finding. Read the size of the basis coefficients with
-care: the basis is a fraction, so a coefficient of 68.88 means that a one percentage point rise in
-the basis (0.01) is associated with a 0.69 rise in annualized volatility, that is 69 volatility
-points.</p></div>
+<p>These results use 1,824 rows from six weeks around the Merge, not the full sample. They show that
+the code runs, not that the relationship is a finding. The basis is a fraction, so a coefficient of
+68.88 means that a one percentage point rise in the basis (0.01) is associated with a 0.69 rise in
+annualized volatility, or 69 volatility points.</p></div>
 
 <div class="box flag"><span class="k">The weakness, stated honestly</span>
-<p>Both coins are pooled into one regression with no clustering by asset, so the standard errors
-treat a BTC hour and an ETH hour at the same moment as independent draws. Crypto returns are highly
-correlated across coins, so the true standard errors are wider than those printed and the stars
-overstate the confidence.</p></div>
+<p>Both coins are pooled in one regression without clustering by asset. The standard errors therefore
+treat BTC and ETH at the same moment as independent observations. Crypto returns are highly
+correlated, so the true standard errors are likely wider and the significance stars too strong.</p></div>
 
-<h2 id="s07"><span class="sec-no">08</span>Step 07 &mdash; meta-labelling and clustered feature importance</h2>
+<h2 id="s07"><span class="sec-no">08</span>Step 07 &mdash; meta-labelling and grouped feature importance</h2>
 
-<p>Two ideas from Marcos Lopez de Prado's <em>Advances in Financial Machine Learning</em> are applied
-here. Meta-labelling means: first decide the direction of a trade by a simple rule, then train a
-model whose only job is to say whether that trade would have worked. Clustered feature importance
-means: score groups of correlated features together rather than one at a time.</p>
+<p>This step uses two ideas from Marcos Lopez de Prado's <em>Advances in Financial Machine
+Learning</em>. Meta-labelling first chooses a trade direction with a simple rule, then trains a
+model to predict whether the trade would work. Grouped feature importance scores correlated
+features together instead of one at a time.</p>
 
 <pre>    <span class="c"># CUSUM filter finds basis shocks large enough to treat as tradeable events.</span>
     cusum_threshold = basis_series.std() * 0.5
@@ -931,53 +917,51 @@ means: score groups of correlated features together rather than one at a time.</
     )</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Find the hours where the basis moved sharply, decide a long or short position from whether the
-basis is unusually high or low, follow each position until it gains enough, loses enough, or three
-days pass, and record whether it ended in profit. Then train a forest to see whether the features
-can tell the winners from the losers.</p></div>
+<p>Find hours when the basis moved sharply. Choose a long or short position from whether the basis
+is unusually high or low. Follow each position until it gains enough, loses enough, or three days
+pass, then record whether it made money. Finally, train a forest to see whether the features predict
+the winners.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> one asset's merged frame plus the pooled feature table. <b>Output:</b> a frame
-indexed by event time with a 0 or 1 <code>Label</code> and the seven feature columns.
-<b>Role:</b> feeds the random forest, the importance table, the correlation heat map and the
-confusion matrix.</p></div>
+<p><b>Input:</b> one asset's merged frame and the pooled feature table. <b>Output:</b> a frame
+indexed by event time with a 0 or 1 <code>Label</code> and seven feature columns.
+<b>Role:</b> feeds the random forest, importance table, correlation heat map, and confusion matrix.</p></div>
 
 <div class="box def"><span class="k">The formula &mdash; the event filter</span>
-<p>The symmetric CUSUM (cumulative sum) filter keeps two running totals and fires when either
-crosses a threshold:</p>
+<p>The symmetric CUSUM (cumulative sum) filter keeps an upward and a downward running total. It
+fires when either crosses a threshold:</p>
 <p>$$S^{+}_t = \max\big(0,\; S^{+}_{t-1} + \Delta b_t\big), \qquad
 S^{-}_t = \min\big(0,\; S^{-}_{t-1} + \Delta b_t\big)$$</p>
 <p>$$\text{event at } t \iff S^{+}_t \ge h \;\text{ or }\; S^{-}_t \le -h,
 \qquad h = 0.5\,\mathrm{sd}(b)$$</p>
-<p class="fnote">$\Delta b_t = b_t - b_{t-1}$ is the hourly change in the basis. $S^{+}$ accumulates
-upward drift and resets to zero whenever it would go negative; $S^{-}$ does the mirror image. $h$ is
-the trigger level, here half the standard deviation of the basis over the sample. After each event
-both totals reset to zero, so the filter fires on sustained moves rather than on noise.</p></div>
+<p class="fnote">$\Delta b_t = b_t - b_{t-1}$ is the hourly basis change. $S^{+}$ accumulates upward
+movement and resets to zero if it would go negative; $S^{-}$ does the reverse. $h$ is the trigger
+level, here half the basis standard deviation over the sample. After each event, both totals reset
+to zero, so the filter responds to sustained moves rather than noise.</p></div>
 
 <div class="box def"><span class="k">The formula &mdash; the triple barrier</span>
-<p>For an event at time $t_0$ with position side $s \in \{-1, +1\}$ and barrier width driven by
-volatility $\sigma_{t_0}$:</p>
+<p>For an event at time $t_0$, position side $s \in \{-1, +1\}$, and volatility
+$\sigma_{t_0}$:</p>
 <p>$$\text{profit barrier} = 1.5\,\sigma_{t_0}, \qquad
 \text{loss barrier} = -1.5\,\sigma_{t_0}, \qquad
 \text{time barrier} = t_0 + 3\ \text{days}$$</p>
 <p>$$R = s \times \left(\frac{P_{t_1}}{P_{t_0}} - 1\right), \qquad
 \text{Label} = \mathbf{1}\{R &gt; 0\}$$</p>
 <p class="fnote">$P_{t_0}$ is the futures price when the event fires and $P_{t_1}$ the price when
-the first of the three barriers is touched. $s$ is $+1$ when the basis is in its top fifth and $-1$
-when it is in its bottom fifth. $\sigma_{t_0}$ is an exponentially weighted standard deviation of
-hourly log returns with span 48, so barriers are wide in turbulent periods and narrow in calm ones.
-$\mathbf{1}\{\cdot\}$ is 1 when the condition holds and 0 otherwise, so the label answers "would
-this position have made money", not "which way did the price go".</p></div>
+the first barrier is touched. $s$ is $+1$ when the basis is in its top fifth and $-1$ when it is in
+its bottom fifth. $\sigma_{t_0}$ is an exponentially weighted standard deviation of hourly log
+returns with span 48, so barriers are wider in turbulent periods and narrower in calm ones.
+$\mathbf{1}\{\cdot\}$ is 1 when the condition holds and 0 otherwise. The label therefore says
+whether the position made money, not which way the price moved.</p></div>
 
 <div class="box def"><span class="k">The formula &mdash; clustered importance</span>
 <p>$$L = -\frac{1}{N}\sum_{j=1}^{N}\Big[y_j \ln \hat{p}_j + (1-y_j)\ln(1-\hat{p}_j)\Big],
 \qquad I_k = L^{(k)} - L^{(0)}$$</p>
 <p class="fnote">$L$ is log loss: $N$ is the number of events, $y_j$ the true label of event $j$,
-$\hat p_j$ the probability the forest assigns to label 1. $L^{(0)}$ is the loss on the untouched
-data and $L^{(k)}$ the loss after the rows of cluster $k$ have been shuffled together. A large
-positive $I_k$ means breaking that cluster hurt the model, so the cluster carried information.
-Shuffling the cluster's columns as one block, rather than column by column, is the point: correlated
-features cannot cover for each other.</p></div>
+and $\hat p_j$ the forest's probability for label 1. $L^{(0)}$ is the loss on untouched data;
+$L^{(k)}$ is the loss after shuffling cluster $k$'s rows together. A large positive $I_k$ means the
+shuffle harmed the model, so the cluster carried information. Shuffling a cluster as one block stops
+correlated features from covering for one another.</p></div>
 
 <div class="box data"><span class="k">Sample data</span>
 <div class="io">
@@ -991,24 +975,24 @@ features cannot cover for each other.</p></div>
 Cluster_2  0.1733   basis_PostMerge, basis_PostMerge_Ethereum
 Cluster_0  0.0643   Ethereum, PostMerge_Ethereum</pre></div>
 </div>
-<p>57 events survive in the smoke window, 35 labelled 0 and 22 labelled 1. The classification report
-saved to <code>outputs/tables/04_meta_labeling_report.txt</code> reports 0.88 accuracy &mdash;
-measured on the same rows the forest was trained on.</p></div>
+<p>57 events survive in the smoke window: 35 have label 0 and 22 have label 1. The classification
+report in <code>outputs/tables/04_meta_labeling_report.txt</code> reports 0.88
+accuracy, measured on the rows used to train the forest.</p></div>
 
 <div class="box flag"><span class="k">The weakness, stated honestly</span>
-<p>Both the accuracy and the importances are in-sample: <code>model.fit</code> and
-<code>model.predict_proba</code> see the same 57 rows. The published version of this method computes
-importance out of sample across cross-validation folds, with purging and embargoing to stop
-overlapping label windows leaking between folds. As written, the 0.88 accuracy says the forest can
-memorise 57 rows, which it can.</p></div>
+<p>Both the accuracy and the importance scores are in-sample:
+<code>model.fit</code> and <code>model.predict_proba</code> use the same 57 rows. The published
+method measures importance out of sample across cross-validation folds, with purging and embargoing
+to prevent overlapping label windows from leaking between folds. Here, 0.88 only shows that the
+forest can fit 57 rows.</p></div>
 
 <div class="box flag"><span class="k">Second weakness</span>
-<p>The features are the same seven columns the regression uses, and three of them
-(<code>PostMerge</code>, <code>Ethereum</code>, <code>PostMerge_Ethereum</code>) are constants or
-near-constants within an asset and period. A forest can separate the four groups perfectly from
-those alone, which is part of why the importances are not small.</p></div>
+<p>The features are the same seven columns used by the regression. Three
+(<code>PostMerge</code>, <code>Ethereum</code>, <code>PostMerge_Ethereum</code>) are constant or
+nearly constant within an asset and period. Those alone can let a forest separate the four groups,
+which helps explain the importance scores.</p></div>
 
-<h2 id="s08"><span class="sec-no">09</span>Step 08 &mdash; parallel trends chart</h2>
+<h2 id="s08"><span class="sec-no">09</span>Step 08 &mdash; parallel-trends chart</h2>
 
 <pre>    <span class="c"># Re-base both series to 100 at the window start for shape comparison.</span>
     trend_frame["BTC_Indexed"] = (
@@ -1019,25 +1003,24 @@ those alone, which is part of why the importances are not small.</p></div>
     ) * 100</pre>
 
 <div class="box gist"><span class="k">In plain words</span>
-<p>Average the volatility to daily numbers, set both coins to 100 at the start of the window, and
-draw them so a reader can judge by eye whether they moved together before the Merge.</p></div>
+<p>Average volatility by day, set both coins to 100 at the window start, and plot them so the reader
+can judge whether they moved together before the Merge.</p></div>
 
 <div class="box def"><span class="k">What it does</span>
-<p><b>Input:</b> the two merged frames, the Merge date, and a window of 90 days on each side.
+<p><b>Input:</b> the two merged frames, the Merge date, and a 90-day window on each side.
 <b>Output:</b> one figure, <code>03_causal_parallel_trends.png</code>. <b>Role:</b> it is the visual
-check of the assumption the difference-in-differences design rests on &mdash; that without the
-Merge, ETH and BTC volatility would have carried on moving in parallel.</p></div>
+check of the assumption behind the difference-in-differences design: without the Merge, ETH and BTC
+volatility would have continued to move in parallel.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
-<p>Both series are divided by their own first value, <code>.iloc[0]</code>. That single day sets the
-level of both lines for the whole chart. A quiet first day makes both lines look like they exploded;
-a turbulent one flattens everything. Changing <code>window_days</code> changes the base day and
-therefore the whole picture, without changing any underlying data.</p></div>
+<p>Each series is divided by its first value, <code>.iloc[0]</code>. That day sets the level for the
+whole chart. A quiet first day makes both lines look explosive; a turbulent one flattens them.
+Changing <code>window_days</code> changes the base day and the picture, not the underlying data.</p></div>
 
 <div class="box flag"><span class="k">The weakness, stated honestly</span>
-<p>Nothing tests the parallel-trends assumption formally. There is no pre-Merge placebo regression
-and no event-study plot of period-by-period differences. The chart invites the reader to judge, and
-a reader who wants the assumption to hold will usually decide that it does.</p></div>
+<p>Nothing formally tests the parallel-trends assumption. There is no pre-Merge placebo regression
+or event-study plot of period-by-period differences. The chart asks the reader to judge, which makes
+the conclusion subjective.</p></div>
 
 <h2 id="helpers"><span class="sec-no">10</span>Data preparation helper &mdash; <code>convert_raw_to_parquet.py</code></h2>
 
@@ -1054,100 +1037,100 @@ def filter_analysis_window(data: pd.DataFrame) -&gt; pd.DataFrame:
 
 <div class="box def"><span class="k">What it does</span>
 <p><b>Input:</b> the original comma-separated text files, restored by hand under
-<code>data/raw/</code>. <b>Output:</b> the parquet files in <code>data/processed/</code> that the
-pipeline reads. <b>Role:</b> run once, by hand. It is not part of a pipeline run.</p></div>
+<code>data/raw/</code>. <b>Output:</b> the Parquet files in <code>data/processed/</code> that the
+pipeline reads. <b>Role:</b> run once by hand; it is not part of a pipeline run.</p></div>
 
 <div class="box warn"><span class="k">Trap</span>
 <p><code>main()</code> deletes every file in <code>data/processed/</code> before writing. If the raw
-files are not in place, you lose the only copy of the inputs the project ships with. There is no
-confirmation prompt and no backup.</p></div>
+files are missing, the project's only shipped input copy is lost. There is no confirmation prompt or
+backup.</p></div>
 
-<h2 id="config"><span class="sec-no">11</span>Settings that change the answer</h2>
+<h2 id="config"><span class="sec-no">11</span>Settings that affect the result</h2>
 
-<p>Only one setting lives in <code>config.toml</code>. The rest are written into the step files, which
-is worth knowing before you try to change a run's behaviour from outside the code.</p>
+<p>Only one setting lives in <code>config.toml</code>. The others are in the step files, so changing a
+run from outside the code has limited effect.</p>
 
 <div class="scroll">
 <table>
-<thead><tr><th>Setting</th><th>Where it lives</th><th>Default</th><th>What changing it does</th></tr></thead>
+<thead><tr><th>Setting</th><th>Where it lives</th><th>Default</th><th>Effect</th></tr></thead>
 <tbody>
-<tr><td><code>pipeline.smoke.start</code> / <code>.end</code></td><td><code>config.toml</code></td><td>2022-09-01 to 2022-10-15</td><td>The only true configuration. Sets the window used by <code>--smoke</code>. Widen it and the structural break test starts producing output; narrow it and more steps go quiet.</td></tr>
-<tr><td><code>MERGE_DATE</code></td><td>step 01</td><td>2022-09-15</td><td>Splits pre from post everywhere. Moving it redefines the treatment.</td></tr>
-<tr><td><code>ANALYSIS_START</code> / <code>ANALYSIS_END</code></td><td>step 01 and the conversion script</td><td>2021-06-01 to 2025-08-31</td><td>Defined in two files that must agree. The step-01 copies are never actually used to filter anything at run time; only the conversion script's copies bite, at parquet-build time.</td></tr>
-<tr><td><code>quantile=0.80</code></td><td>step 03, <code>build_dollar_bars</code></td><td>0.80</td><td>Raises or lowers the dollar-bar threshold, so fewer or more bars. Affects one figure only.</td></tr>
-<tr><td><code>roll_days_before_expiry=14</code></td><td>step 04</td><td>14</td><td>How early to switch contracts. Larger values roll further from expiry, where liquidity is thinner but the basis is cleaner.</td></tr>
-<tr><td><code>window_hours</code> 24 and 168</td><td>step 05 call sites</td><td>24, 168</td><td>The forecast horizons. The 168-hour column is what truncates the sample end by seven days.</td></tr>
-<tr><td><code>min_window=180</code>, <code>step=5</code></td><td>step 06, module level</td><td>180, 5</td><td>Minimum days before the break test reports anything, and how often it reports. The single biggest driver of run time.</td></tr>
-<tr><td><code>maxlags=24</code></td><td>step 06</td><td>24</td><td>How far the standard errors allow autocorrelation to reach. Matched to the 24-hour outcome window.</td></tr>
-<tr><td><code>ptsl=[1.5, 1.5]</code>, <code>number_days=3</code>, span 48</td><td>step 07</td><td>1.5, 3, 48</td><td>Barrier width, holding limit, and the volatility memory that sets barrier width. They decide how many events become winners.</td></tr>
-<tr><td><code>max_clusters=4</code>, <code>random_state=42</code></td><td>step 07</td><td>4, 42</td><td>How many feature groups the clustering may form, and the seed that makes the grouping repeatable.</td></tr>
-<tr><td><code>window_days=90</code></td><td>step 08</td><td>90</td><td>Half-width of the parallel-trends chart, and therefore which day both lines are re-based to.</td></tr>
+<tr><td><code>pipeline.smoke.start</code> / <code>.end</code></td><td><code>config.toml</code></td><td>2022-09-01 to 2022-10-15</td><td>The only true configuration. It sets the <code>--smoke</code> window. Widening it gives the structural break test enough data; narrowing it makes more steps return little or nothing.</td></tr>
+<tr><td><code>MERGE_DATE</code></td><td>step 01</td><td>2022-09-15</td><td>Splits every observation into pre- or post-Merge. Moving it changes the treatment date.</td></tr>
+<tr><td><code>ANALYSIS_START</code> / <code>ANALYSIS_END</code></td><td>step 01 and the conversion script</td><td>2021-06-01 to 2025-08-31</td><td>Defined in two files that must agree. The step-01 copies do not filter data at run time; only the conversion script's copies affect Parquet creation.</td></tr>
+<tr><td><code>quantile=0.80</code></td><td>step 03, <code>build_dollar_bars</code></td><td>0.80</td><td>Changes the dollar-bar threshold and therefore the number of bars. It affects one figure only.</td></tr>
+<tr><td><code>roll_days_before_expiry=14</code></td><td>step 04</td><td>14</td><td>Sets how early contracts switch. Larger values roll further from expiry, where liquidity is thinner but the basis is cleaner.</td></tr>
+<tr><td><code>window_hours</code> 24 and 168</td><td>step 05 call sites</td><td>24, 168</td><td>Sets the forecast horizons. The 168-hour column shortens the sample end by seven days.</td></tr>
+<tr><td><code>min_window=180</code>, <code>step=5</code></td><td>step 06, module level</td><td>180, 5</td><td>Sets the minimum days before the break test reports and how often it reports. It is the largest run-time driver.</td></tr>
+<tr><td><code>maxlags=24</code></td><td>step 06</td><td>24</td><td>Sets how far the standard errors allow autocorrelation to extend. It matches the 24-hour outcome window.</td></tr>
+<tr><td><code>ptsl=[1.5, 1.5]</code>, <code>number_days=3</code>, span 48</td><td>step 07</td><td>1.5, 3, 48</td><td>Sets barrier width, holding limit, and the volatility memory used for barrier width. These decide how many events become winners.</td></tr>
+<tr><td><code>max_clusters=4</code>, <code>random_state=42</code></td><td>step 07</td><td>4, 42</td><td>Sets the maximum feature groups and the seed that makes the grouping repeatable.</td></tr>
+<tr><td><code>window_days=90</code></td><td>step 08</td><td>90</td><td>Sets the half-width of the parallel-trends chart and which day both lines use as their base.</td></tr>
 </tbody>
 </table>
 </div>
 
 <div class="box flag"><span class="k">Stated honestly</span>
-<p>The project's own convention is that tunable settings belong in <code>config.toml</code>. Ten of
-the eleven rows above do not follow it. Moving them would be a design change rather than a bug fix,
-so nothing here was moved; it is listed so you know where to look.</p></div>
+<p>The project says tunable settings belong in <code>config.toml</code>, but ten of the eleven rows
+above do not follow that rule. Moving them would be a design change, not a bug fix. They are left in
+place and listed here so you know where to look.</p></div>
 
 <h2 id="fixes"><span class="sec-no">12</span>Fixes applied</h2>
 
-<p>Five defects were found and corrected while writing this page. The first two stopped the pipeline
-from running at all; the third changed a number; the last two affected reproducibility and clarity.</p>
+<p>Five defects were found and corrected while writing this page. The first two stopped the pipeline;
+the third changed a result; the last two affected reproducibility and clarity.</p>
 
 <div class="scroll">
 <table>
-<thead><tr><th>What was wrong</th><th>Where</th><th>Effect before</th><th>The fix</th></tr></thead>
+<thead><tr><th>Problem</th><th>Where</th><th>Before</th><th>Fix</th></tr></thead>
 <tbody>
 <tr>
-  <td><span class="chip c-bug">blocker</span> The shared import step had lost its <code>import numpy as np</code>, although steps 04, 05 and 06 all use <code>np</code>. The only surviving import sat in step 07, which runs last.</td>
+  <td><span class="chip c-bug">blocker</span> The shared import step was missing <code>import numpy as np</code>, although steps 04, 05 and 06 use <code>np</code>. The only remaining import was in step 07, which runs last.</td>
   <td><code>steps/01_library_imports.py</code></td>
-  <td><code>NameError: name 'np' is not defined</code> in step 04, on the type annotation of <code>contract_roll_dates</code>. No run could finish.</td>
-  <td>Restored <code>import numpy as np</code> in the shared import step, matching the original notebook's first cell.</td>
+  <td><code>NameError: name 'np' is not defined</code> in step 04, on the type annotation of <code>contract_roll_dates</code>. The run could not finish.</td>
+  <td>Restored <code>import numpy as np</code> in the shared import step, matching the notebook's first cell.</td>
 </tr>
 <tr>
-  <td><span class="chip c-bug">blocker</span> <code>smf.ols</code> was called with no import of <code>statsmodels.formula.api</code> left anywhere in the project.</td>
+  <td><span class="chip c-bug">blocker</span> <code>smf.ols</code> was called, but no import of <code>statsmodels.formula.api</code> remained in the project.</td>
   <td><code>steps/06_structural_breaks_valudation.py</code></td>
-  <td><code>NameError: name 'smf' is not defined</code>. The regression, the only result the study is about, could never run.</td>
-  <td>Added <code>import statsmodels.formula.api as smf</code> to step 06 rather than step 01, so the import sits in the file that uses it and an automatic unused-import pass cannot strip it again.</td>
+  <td><code>NameError: name 'smf' is not defined</code>. The regression could not run.</td>
+  <td>Added <code>import statsmodels.formula.api as smf</code> to step 06 rather than step 01, where it is used, so an automatic unused-import pass cannot remove it.</td>
 </tr>
 <tr>
-  <td><span class="chip c-veto">wrong number</span> The backward roll adjustment compared the next contract's first price <em>after</em> the roll with the current contract's price <em>at</em> the roll, so one bar of market movement was mixed into the calendar spread.</td>
+  <td><span class="chip c-veto">wrong number</span> The backward roll adjustment compared the next contract's first price <em>after</em> the roll with the current contract's price <em>at</em> the roll. That mixed one bar of market movement into the calendar spread.</td>
   <td><code>steps/04_continuous_futures_construction.py</code></td>
-  <td>The ETH September 2022 roll produced an adjustment of 23.09 dollars instead of 5.26. The extra 17.83 dollars, about 1.3 per cent of the price, was applied to every earlier hour of the adjusted series.</td>
-  <td>Take the next contract's price at the same timestamp, falling back to the first later price only when that timestamp is missing.</td>
+  <td>The ETH September 2022 roll produced an adjustment of 23.09 dollars instead of 5.26. The extra 17.83 dollars, about 1.3 per cent of the price, was added to every earlier hour.</td>
+  <td>Use the next contract's price at the same timestamp. Fall back to the first later price only when that timestamp is missing.</td>
 </tr>
 <tr>
-  <td><span class="chip c-drop">reproducibility</span> The feature-importance shuffle used the unseeded global <code>np.random.shuffle</code>, while the clustering and the forest beside it both fixed <code>random_state=42</code>.</td>
+  <td><span class="chip c-drop">reproducibility</span> The feature-importance shuffle used unseeded global <code>np.random.shuffle</code>, while the clustering and forest used <code>random_state=42</code>.</td>
   <td><code>steps/07_meta_labeling_and_clustered_feature_importance.py</code></td>
-  <td>Two runs on identical data gave different importances: Cluster_2 came out 0.1228 on one run and 0.1492 on the next. The saved table was not reproducible.</td>
-  <td>Replaced it with a locally seeded generator, <code>np.random.default_rng(42)</code>, which shuffles rows as a block exactly as before.</td>
+  <td>Two runs on identical data gave different importances: Cluster_2 was 0.1228 in one run and 0.1492 in the next. The saved table was not reproducible.</td>
+  <td>Replaced it with the locally seeded generator <code>np.random.default_rng(42)</code>, which still shuffles rows as a block.</td>
 </tr>
 <tr>
-  <td><span class="chip c-drop">name collision</span> Step 06 assigned <code>eth_threshold</code>, a name step 03 had already used for the ETH dollar-bar threshold. In one shared namespace the second assignment silently destroys the first.</td>
+  <td><span class="chip c-drop">name collision</span> Step 06 assigned <code>eth_threshold</code>, already used in step 03 for the ETH dollar-bar threshold. In the shared namespace, the second assignment silently overwrites the first.</td>
   <td><code>steps/06_structural_breaks_valudation.py</code></td>
-  <td>After a run, <code>context["eth_threshold"]</code> held a test critical value (<code>nan</code> in smoke mode) rather than the 586,581.81 dollar bar threshold its name promises.</td>
-  <td>Renamed the step-06 variable to <code>eth_bsadf_threshold</code>. No output changes.</td>
+  <td>After a run, <code>context["eth_threshold"]</code> held a test critical value (<code>nan</code> in smoke mode), not the 586,581.81 dollar-bar threshold its name suggests.</td>
+  <td>Renamed the step-06 variable to <code>eth_bsadf_threshold</code>. Outputs did not change.</td>
 </tr>
 <tr>
-  <td><span class="chip c-drop">unusable lock</span> <code>uv.lock</code> pinned RiskLabAI to commit <code>751737a7</code>, which no longer exists on the upstream repository.</td>
+  <td><span class="chip c-drop">unusable lock</span> <code>uv.lock</code> pinned RiskLabAI to commit <code>751737a7</code>, which no longer exists upstream.</td>
   <td><code>uv.lock</code></td>
   <td><code>uv sync</code> failed with <code>fatal: remote error: upload-pack: not our ref</code>. The project could not be installed on a clean machine.</td>
-  <td>Re-pinned with <code>uv lock --upgrade-package risklabai</code> to version 2.0.3, commit <code>628092fd</code>. Every function the project calls has the same signature there, and the full smoke run and the test suite both pass on it.</td>
+  <td>Re-pinned with <code>uv lock --upgrade-package risklabai</code> to version 2.0.3, commit <code>628092fd</code>. The called functions keep the same signatures, and the full smoke run and test suite pass.</td>
 </tr>
 </tbody>
 </table>
 </div>
-<p class="legend"><span class="chip c-bug">blocker</span> nothing ran until this was fixed
-<span class="chip c-veto">wrong number</span> results changed
-<span class="chip c-drop">reproducibility</span> same input, different or misleading output</p>
+<p class="legend"><span class="chip c-bug">blocker</span> the pipeline could not run
+<span class="chip c-veto">wrong number</span> a result changed
+<span class="chip c-drop">reproducibility</span> the same input gave different or misleading output</p>
 
 <div class="box def"><span class="k">A defect deliberately left alone</span>
-<p><code>find_roll_point</code> derives the expiry as the last calendar day of the expiry month,
-while Binance quarterly contracts settle at 08:00 UTC on the last Friday. Because the roll happens
-14 days earlier, the difference never changes a chosen roll time on this data. Correcting it would
-mean deciding a settlement convention, which is a modelling choice rather than a bug fix.</p></div>
+<p><code>find_roll_point</code> derives expiry as the last calendar day of the expiry month, while
+Binance quarterly contracts settle at 08:00 UTC on the last Friday. Because the roll happens 14 days
+earlier, the difference does not change the chosen roll time on this data. Correcting it would require
+choosing a settlement convention, which is a modelling choice rather than a bug fix.</p></div>
 
 <h2 id="callgraph"><span class="sec-no">13</span>Call graph</h2>
 
@@ -1191,92 +1174,92 @@ scripts/run_pipeline.py  ->  cli.main()          same entry, no packaging needed
 notebooks/demo.ipynb     ->  run_pipeline()      full window, no smoke overrides
 tests/test_smoke_pipeline.py -> run_pipeline(build_smoke_overrides())</pre>
 
-<p class="fnote">Indentation is the call direction: a name is called by the line above it at one less
-level of indentation. Names beginning with RiskLabAI come from the external research library.</p>
+<p class="fnote">Indentation shows call direction: a name is called by the line above it at one less
+level. Names beginning with RiskLabAI come from the external research library.</p>
 
 <h2 id="edge"><span class="sec-no">14</span>Edge cases</h2>
 
 <div class="scroll">
 <table>
-<thead><tr><th>Situation</th><th>What would go wrong</th><th>What handles it</th></tr></thead>
+<thead><tr><th>Situation</th><th>Failure</th><th>Handling</th></tr></thead>
 <tbody>
-<tr><td>A spot parquet file is missing</td><td>Crash deep inside the dollar-bar builder with an unrelated message</td><td><code>load_frd_spot</code> prints <code>File not found</code> and returns an empty frame &mdash; the run still fails later, but the printed line tells you why</td></tr>
-<tr><td>No futures files match the glob</td><td><code>pd.concat([])</code> raises</td><td><code>load_futures_contracts</code> returns an empty frame when the list is empty</td></tr>
-<tr><td>Only one quarterly contract in the window</td><td>The stitching loop would index past the end of the contract list</td><td>The <code>index &lt; len(contracts) - 1</code> guard sends the last contract down the no-adjustment branch</td></tr>
-<tr><td>Two contracts never quote at the same hour</td><td>The roll time cannot be found and the adjustment is undefined</td><td><code>find_roll_point</code> returns <code>None</code>, the segment is kept whole, and the adjustment falls back to 0 with a printed warning</td></tr>
-<tr><td>Duplicated minute timestamps in the spot file</td><td>Rolling windows would count rows, not minutes, so a 1,440-row window would span less than 24 hours</td><td><code>hf_data[~hf_data.index.duplicated(keep="last")]</code> then <code>resample("1min")</code></td></tr>
-<tr><td>A futures hour with no spot price within five minutes</td><td>A stale volatility number would be attached to the wrong hour</td><td><code>reindex(method="nearest", tolerance="5min")</code> yields <code>NaN</code>, later dropped by <code>dropna</code></td></tr>
-<tr><td>The window is shorter than the break test needs</td><td>The loop body never runs</td><td>Nothing handles it. An empty series is returned and an empty figure is saved. See the trap list below.</td></tr>
-<tr><td>The CUSUM filter fires no events, or none coincide with an extreme basis</td><td>Downstream indexing on an empty frame</td><td><code>build_meta_dataset</code> returns an empty frame early, on three separate checks</td></tr>
-<tr><td>Only one class of label survives</td><td><code>log_loss</code> would raise on a single-class problem</td><td>Partly handled: <code>labels=model.classes_</code> is passed, but a single-class fit would still fail. Not triggered on the shipped data.</td></tr>
+<tr><td>A spot Parquet file is missing</td><td>The dollar-bar builder fails later with an unrelated message</td><td><code>load_frd_spot</code> prints <code>File not found</code> and returns an empty frame. The run still fails later, but the printed line gives the cause.</td></tr>
+<tr><td>No futures files match the glob</td><td><code>pd.concat([])</code> raises</td><td><code>load_futures_contracts</code> returns an empty frame when the list is empty.</td></tr>
+<tr><td>Only one quarterly contract in the window</td><td>The stitching loop could index past the contract list</td><td>The <code>index &lt; len(contracts) - 1</code> guard sends the last contract through the no-adjustment branch.</td></tr>
+<tr><td>Two contracts never quote at the same hour</td><td>The roll time is unavailable and the adjustment is undefined</td><td><code>find_roll_point</code> returns <code>None</code>, the segment stays whole, and the adjustment falls back to 0 with a warning.</td></tr>
+<tr><td>Duplicated minute timestamps in the spot file</td><td>A 1,440-row rolling window would span less than 24 hours</td><td><code>hf_data[~hf_data.index.duplicated(keep="last")]</code> then <code>resample("1min")</code>.</td></tr>
+<tr><td>A futures hour has no spot price within five minutes</td><td>A stale volatility value could attach to the wrong hour</td><td><code>reindex(method="nearest", tolerance="5min")</code> yields <code>NaN</code>, later removed by <code>dropna</code>.</td></tr>
+<tr><td>The window is shorter than the break test needs</td><td>The loop never runs</td><td>Nothing handles it. The code returns an empty series and saves an empty figure. See the trap list.</td></tr>
+<tr><td>The CUSUM filter fires no events, or none coincide with an extreme basis</td><td>Later code indexes an empty frame</td><td><code>build_meta_dataset</code> returns an empty frame early through three separate checks.</td></tr>
+<tr><td>Only one class of label survives</td><td><code>log_loss</code> raises on a single-class problem</td><td>Partly handled: the code passes <code>labels=model.classes_</code>, but a single-class fit still fails. This is not triggered by the shipped data.</td></tr>
 </tbody>
 </table>
 </div>
 
-<h2 id="traps"><span class="sec-no">15</span>Traps and gotchas</h2>
+<h2 id="traps"><span class="sec-no">15</span>Traps</h2>
 
 <div class="scroll">
 <table>
-<thead><tr><th>The trap</th><th>Why it bites</th></tr></thead>
+<thead><tr><th>Trap</th><th>Why it matters</th></tr></thead>
 <tbody>
-<tr><td><b>One namespace for eight files</b></td><td>Any step can overwrite any earlier step's variable, and nothing warns. The <code>eth_threshold</code> collision fixed above is one instance; the pattern remains available to the next person who adds a step.</td></tr>
-<tr><td><b>Automatic unused-import removal breaks the pipeline</b></td><td>Step 01 imports <code>numpy</code>, <code>pandas</code>, <code>matplotlib</code> and <code>seaborn</code> for the benefit of later files, so within its own file they look unused. Any tool that strips unused imports will delete them, and the run dies several files later with a <code>NameError</code>. This is exactly how the two blocking defects listed above arose. Exclude <code>src/ethereum_merge/steps/</code> from that kind of automatic clean-up.</td></tr>
-<tr><td><b>Empty results are silent</b></td><td>With the shipped smoke window the structural break test produces zero statistics and still saves a figure. A short window, a bad glob, or a missing file all fail this way: quietly, with an artefact on disk that looks like a result.</td></tr>
-<tr><td><b><code>warnings.filterwarnings("ignore")</code> in step 01</b></td><td>Every pandas and statsmodels warning for the rest of the run is suppressed, including the ones about degenerate regressions and deprecated behaviour.</td></tr>
-<tr><td><b>The 168-hour column silently shortens the sample</b></td><td><code>dropna(subset=["forward_vol_24h", "forward_vol_168h"])</code> removes the last seven days even though only the 24-hour column is used as the outcome. In the smoke run that is 336 of 2,160 rows.</td></tr>
-<tr><td><b>Forward windows straddle the event</b></td><td>Rows in the last 24 hours before the Merge carry <code>PostMerge = 0</code> but an outcome measured after it.</td></tr>
-<tr><td><b>Nothing consumes the dollar bars</b></td><td>Step 03 is the slowest step after the break test and produces a single figure. Anyone reading the map may assume the rest of the study is built on dollar bars. It is not: everything downstream uses hourly data.</td></tr>
-<tr><td><b>Expiry labels come from filenames</b></td><td>Rename or re-order the parquet files and contracts are mislabelled with no error. The information is also inside the files, in <code>original_symbol</code>.</td></tr>
-<tr><td><b>In-sample scoring in step 07</b></td><td>The 0.88 accuracy and the importance numbers are measured on the training rows. They cannot be quoted as out-of-sample performance.</td></tr>
-<tr><td><b><code>convert_raw_to_parquet.py</code> deletes first</b></td><td>It empties <code>data/processed/</code> before writing anything. Run it without the raw files present and the shipped inputs are gone.</td></tr>
+<tr><td><b>One namespace for eight files</b></td><td>Any step can overwrite an earlier variable without warning. The <code>eth_threshold</code> collision above is one example; a new step can create another.</td></tr>
+<tr><td><b>Automatic unused-import removal breaks the pipeline</b></td><td>Step 01 imports <code>numpy</code>, <code>pandas</code>, <code>matplotlib</code> and <code>seaborn</code> for later files, so they look unused there. A cleanup tool can delete them, and the run then fails several files later with a <code>NameError</code>. Exclude <code>src/ethereum_merge/steps/</code> from this cleanup.</td></tr>
+<tr><td><b>Empty results are silent</b></td><td>With the smoke window, the structural break test produces zero statistics but still saves a figure. A short window, bad glob, or missing file can leave an artefact that looks like a result.</td></tr>
+<tr><td><b><code>warnings.filterwarnings("ignore")</code> in step 01</b></td><td>It suppresses every pandas and statsmodels warning for the rest of the run, including warnings about degenerate regressions and deprecated behaviour.</td></tr>
+<tr><td><b>The 168-hour column silently shortens the sample</b></td><td><code>dropna(subset=["forward_vol_24h", "forward_vol_168h"])</code> removes the last seven days even though only the 24-hour column is the outcome. In the smoke run, that is 336 of 2,160 rows.</td></tr>
+<tr><td><b>Forward windows cross the event</b></td><td>Rows in the last 24 hours before the Merge have <code>PostMerge = 0</code> but an outcome measured after it.</td></tr>
+<tr><td><b>Nothing consumes the dollar bars</b></td><td>Step 03 is the slowest step after the break test and produces one figure. The map may suggest that the study uses dollar bars; it does not. Later steps use hourly data.</td></tr>
+<tr><td><b>Expiry labels come from filenames</b></td><td>Renaming or re-ordering the Parquet files silently mislabels contracts. The expiry information is also in <code>original_symbol</code>.</td></tr>
+<tr><td><b>In-sample scoring in step 07</b></td><td>The 0.88 accuracy and importance values use the training rows. They are not out-of-sample performance.</td></tr>
+<tr><td><b><code>convert_raw_to_parquet.py</code> deletes first</b></td><td>It empties <code>data/processed/</code> before writing. Without the raw files, the shipped inputs are gone.</td></tr>
 </tbody>
 </table>
 </div>
 
-<h2 id="limits"><span class="sec-no">16</span>Limitations, stated honestly</h2>
+<h2 id="limits"><span class="sec-no">16</span>Limitations</h2>
 
 <ul>
   <li><b>Every number on this page comes from the smoke window</b>, 1 September to 15 October 2022.
-  A full run over 2021-06 to 2025-08 was not performed here: the structural break loop alone would
-  refit the test a few hundred times over windows up to 1,500 days long. The smoke run finishes in
-  about 23 seconds; a full run is a different order of magnitude and was out of scope for
-  documenting the code.</li>
-  <li><b>The DiD table is not a finding.</b> Six weeks of hourly data around one event, two assets,
-  no clustered standard errors and no placebo test. The code is verified; the economics is not.</li>
-  <li><b>Bitcoin as a control group is an assumption, not a fact.</b> The design needs BTC volatility
-  to be what ETH volatility would have done without the Merge. Step 08 draws a picture of that
+  A full run over 2021-06 to 2025-08 was not performed. The structural break loop alone would refit
+  the test a few hundred times over windows up to 1,500 days. The smoke run takes about 23 seconds;
+  a full run was outside the scope of this page.</li>
+  <li><b>The DiD table is not a finding.</b> It uses six weeks of hourly data around one event and two
+  assets, with no clustered standard errors or placebo test. The code is verified; the economic
+  claim is not.</li>
+  <li><b>Bitcoin as a control group is an assumption, not a fact.</b> The design assumes BTC
+  volatility represents what ETH volatility would have done without the Merge. Step 08 shows this
   assumption; nothing tests it.</li>
   <li><b>The pipeline has one test.</b> <code>tests/test_smoke_pipeline.py</code> checks that a smoke
-  run finishes and returns a dictionary. No function has a unit test, so a wrong number is only
-  caught by reading the output.</li>
-  <li><b>Most tunable values are not in <code>config.toml</code>.</b> Changing the roll days, the
-  barrier widths, or the break-test window means editing source files.</li>
-  <li><b>The dependency on RiskLabAI is a moving target.</b> It is installed from a Git branch, not a
-  release. The pin had already gone stale once; it can again.</li>
+  run finishes and returns a dictionary. No function has a unit test, so a wrong number is caught
+  only by reading the output.</li>
+  <li><b>Most tunable values are not in <code>config.toml</code>.</b> Changing roll days, barrier
+  widths, or the break-test window requires editing source files.</li>
+  <li><b>The RiskLabAI dependency can change.</b> It is installed from a Git branch, not a release.
+  Its pin has already gone stale once.</li>
 </ul>
 
 <h2 id="verify"><span class="sec-no">17</span>Verification</h2>
 
 <div class="scroll">
 <table>
-<thead><tr><th>Check</th><th>How it works</th><th>Result</th></tr></thead>
+<thead><tr><th>Check</th><th>Method</th><th>Result</th></tr></thead>
 <tbody>
-<tr><td><code>uv sync --group dev</code></td><td>Resolves and installs every dependency from the lock file</td><td class="pass">passes after the lock was re-pinned; failed before</td></tr>
-<tr><td><code>uv run pytest</code></td><td>Runs the smoke pipeline end to end and asserts it returns a context with <code>SMOKE_TEST_MODE</code> set</td><td class="pass">1 passed in 23.07s</td></tr>
-<tr><td><code>uv run ethereum-merge --smoke</code></td><td>The console entry point, on the window in <code>config.toml</code></td><td class="pass">exit 0; six figures and five tables written</td></tr>
-<tr><td>Basis arithmetic</td><td>Recomputed one row by hand: $(1530.25 - 1551.94)/1551.94$</td><td class="pass">$-0.013976$, matches the printed $-0.0140$</td></tr>
-<tr><td>Forward volatility</td><td>Recomputed the 24-hour figure for 2022-09-05 04:00 outside the pipeline from the raw parquet</td><td class="pass">0.6515491462566797 both ways</td></tr>
-<tr><td>Roll adjustment</td><td>Compared the two contracts' prices at the roll instant against the fitted <code>adjustment</code> column</td><td class="pass">$1328.86 - 1323.60 = 5.26$, matches</td></tr>
+<tr><td><code>uv sync --group dev</code></td><td>Resolves and installs dependencies from the lock file</td><td class="pass">passes after the lock was re-pinned; failed before</td></tr>
+<tr><td><code>uv run pytest</code></td><td>Runs the smoke pipeline and checks that the returned context has <code>SMOKE_TEST_MODE</code> set</td><td class="pass">1 passed in 23.07s</td></tr>
+<tr><td><code>uv run ethereum-merge --smoke</code></td><td>Runs the console entry point with the window in <code>config.toml</code></td><td class="pass">exit 0; six figures and five tables written</td></tr>
+<tr><td>Basis arithmetic</td><td>Recomputed one row: $(1530.25 - 1551.94)/1551.94$</td><td class="pass">$-0.013976$, matches the printed $-0.0140$</td></tr>
+<tr><td>Forward volatility</td><td>Recomputed the 24-hour figure for 2022-09-05 04:00 from the raw Parquet outside the pipeline</td><td class="pass">0.6515491462566797 both ways</td></tr>
+<tr><td>Roll adjustment</td><td>Compared the two contract prices at the roll with the fitted <code>adjustment</code> column</td><td class="pass">$1328.86 - 1323.60 = 5.26$, matches</td></tr>
 <tr><td>Importance reproducibility</td><td>Ran the pipeline twice after the seeding fix and compared the importance table</td><td class="pass">identical to four decimals; differed before</td></tr>
-<tr><td>Row accounting</td><td>Checked that 2,160 pooled rows minus 1,824 clean rows equals 336, which is 168 hours for each of two assets</td><td class="pass">exactly seven days lost to the 168-hour window</td></tr>
+<tr><td>Row accounting</td><td>Checked that 2,160 pooled rows minus 1,824 clean rows equals 336, or 168 hours for each asset</td><td class="pass">exactly seven days lost to the 168-hour window</td></tr>
 </tbody>
 </table>
 </div>
 
-<p class="foot">Source of every snippet: <code>src/ethereum_merge/</code> and <code>scripts/</code> in
-this repository. Source of every number: <code>uv run ethereum-merge --smoke</code> over
-<code>data/processed/</code>, 1 September to 15 October 2022. Structure and intent:
-<code>GUIDE_ROOT.md</code>, <code>GUIDE_OVERVIEW.md</code>, and the untouched original notebook in
+<p class="foot">Snippets come from <code>src/ethereum_merge/</code> and <code>scripts/</code> in this
+repository. Numbers come from <code>uv run ethereum-merge --smoke</code> over
+<code>data/processed/</code>, 1 September to 15 October 2022. The structure and intent are documented
+in <code>GUIDE_ROOT.md</code>, <code>GUIDE_OVERVIEW.md</code>, and the original notebook in
 <code>docs/reference/ethereum-merge.ipynb</code>.</p>
 
 </div>
