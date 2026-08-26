@@ -77,7 +77,3 @@ these values at runtime.
   cluster heatmap, meta-labeling confusion matrix.
 - `outputs/tables/`: descriptive statistics, DiD regression results, feature
   importance, meta-labeling report.
-
-## License
-
-All rights reserved. See [LICENSE](LICENSE).
